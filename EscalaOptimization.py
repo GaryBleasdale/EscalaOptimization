@@ -5,37 +5,58 @@ import pandas as pd
 model = cp_model.CpModel()
 
 employees = {
-    'Juana Matos': {'available_days': ['Tuesday','Wednesday','Thursday', 'Friday', 'Saturday', 'Sunday'], 'shift_preferences': ['day']},
-    'Angela Domingues': {'available_days': ['Monday','Tuesday','Wednesday','Friday'], 'shift_preferences': ['night']},
-    'Matilda Morão': {'available_days': ['Monday','Wednesday','Thursday', 'Friday', 'Saturday', 'Sunday'], 'shift_preferences': ['night','day']}
+    'Juana Matos': {'available_days': ['Monday','Tuesday','Wednesday','Thursday', 'Friday', 'Saturday', 'Sunday'], 'shift_preferences': ['day']},
+    'Angela Domingues': {'available_days': ['Monday','Tuesday','Wednesday','Thursday', 'Friday'], 'shift_preferences': ['night','day']},
+    'Matilda Morão': {'available_days': ['Monday','Tuesday','Wednesday','Thursday', 'Friday', 'Saturday', 'Sunday'], 'shift_preferences': ['night','day']}
 }
 
-patients = {
-    'Mappy Carino': {'care_days': ['Monday', 'Tuesday','Wednesday','Thursday', 'Friday', 'Saturday', 'Sunday'], 'care_shifts': ['day', 'night']}
+patients = { 
+    'Boni': {'care_days': ['Monday', 'Tuesday','Wednesday','Thursday', 'Friday'], 'care_shifts': ['night']},
+    'Mappy Carino': {'care_days': ['Monday', 'Tuesday','Wednesday','Thursday', 'Friday', 'Saturday', 'Sunday'], 'care_shifts': ['day', 'night']},
+
 }
 
+# Create shift_vars including patient name
+# Create shift_vars including patient name
 shift_vars = {}
+for patient in patients:
+    for employee in employees:
+        for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']:
+            for shift in ['day', 'night']:
+                var_id = (patient, employee, day, shift)
+                shift_vars[var_id] = model.NewBoolVar(str(var_id))
+
+# Define employee capacity (1 shift per day)
+employee_capacity = {employee: 1 for employee in employees}
+
+# Define shift cost (1 for each assigned shift)
+shift_cost = 1
+
+# Create shift_vars and employee daily capacity constraints
 for employee in employees:
     for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']:
-        for shift in ['day', 'night']:
-            var_id = (employee, day, shift)
-            shift_vars[var_id] = model.NewBoolVar(str(var_id))
+        daily_shifts = []
+        for patient in patients:
+            for shift in ['day', 'night']:
+                var_id = (patient, employee, day, shift)
+                shift_vars[var_id] = model.NewBoolVar(str(var_id))
+                daily_shifts.append(shift_vars[var_id])
+        # Ensure the sum of shifts for each employee each day does not exceed capacity
+        model.Add(sum(daily_shifts) * shift_cost <= employee_capacity[employee])
 
-# New Patient Care Requirements
+# Adjusted Patient Care Requirements for each patient separately
 for patient, care_details in patients.items():
     for day in care_details['care_days']:
-        for shift in ['day', 'night']:
-            # Check if this shift is required for the patient
-            if shift in care_details['care_shifts']:
-                available_employees = [shift_vars[(employee, day, shift)] 
-                                       for employee, details in employees.items()
-                                       if day in details['available_days'] and shift in details['shift_preferences']]
-                if available_employees:
-                    model.Add(sum(available_employees) >= 1)
-                else:
-                    print(f"No available employees for {shift} shift on {day}")
+        for shift in care_details['care_shifts']:
+            available_employees = [shift_vars[(patient, employee, day, shift)]
+                                   for employee in employees
+                                   if day in employees[employee]['available_days'] and shift in employees[employee]['shift_preferences']]
+            if available_employees:
+                model.Add(sum(available_employees) >= 1)
+            else:
+                print(f"No available employees for {patient} on {day} for {shift} shift")
 
-
+# [Code to solve the model and create the schedule table]
 
 # Solve the model
 solver = cp_model.CpSolver()
@@ -44,28 +65,19 @@ status = solver.Solve(model)
 # Solution found, now create a more structured schedule table
 if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
     print("Solution found!")
-
-    # Initialize a dictionary to store the schedule
-    schedule_dict = {employee: {day: '' for day in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']} for employee in employees}
-
-    # Populate the schedule dictionary
+    schedule_dict = {}
     for var_id, var in shift_vars.items():
         if solver.Value(var):
-            employee, day, shift = var_id
-            patient_shift_info = f"{list(patients.keys())[0]} {shift}"  # Assuming one patient for now
-            schedule_dict[employee][day] = patient_shift_info
+            patient, employee, day, shift = var_id
+            if day not in schedule_dict:
+                schedule_dict[day] = {}
+            schedule_dict[day][employee] = f"{patient} {shift}"
 
-    # Convert the schedule dictionary into a pandas DataFrame for display
+    # Create DataFrame from schedule_dict
     schedule_df = pd.DataFrame.from_dict(schedule_dict, orient='index')
 
-    # Print the DataFrame
+    # Print and export the DataFrame
     print(schedule_df)
-
-    csv_file_path = '/home/gmbleasdale/Desktop/schedule.csv'
-
-    # Export the DataFrame to a CSV file
-    schedule_df.to_csv(csv_file_path, index=True)
-
-    print(f"Schedule exported to {csv_file_path}")
+    schedule_df.to_csv('/home/gmbleasdale/Desktop/schedule.csv', index=True)
 else:
     print("No solution found.")
